@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ── Config ────────────────────────────────────────────────────────────────────
-START_URL   = "https://www.earabicmarket.com/en/company/saudi-arabia/all"
+START_URL   = "https://www.earabicmarket.com/en/companies/saudi-arabia/all"
 BASE_URL    = "https://www.earabicmarket.com"
 DELAY       = 2.5          # seconds between pages
 MAX_PAGES   = 999
@@ -33,71 +33,63 @@ DEBUG_SHOT  = "debug_page1.png"
 # ─────────────────────────────────────────────────────────────────────────────
 
 FIELDNAMES = [
-    "name", "profile_url", "description",
+    "name", "description",
     "city", "country", "address", "phone", "website", "logo_url",
 ]
-
-NAV_SLUGS = {
-    "companies", "products", "premium-companies", "earabicmarket-membership",
-    "site-map", "aboutus", "terms-of-use", "privacy-policy", "contactus",
-    "subscribe-email-updates", "services", "en", "search",
-}
 
 
 def parse_companies(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     companies = []
 
-    for logo_img in soup.find_all("img", src=re.compile(r"/Companies/Logo/"), title=True):
-        name = logo_img.get("title", "").strip()
+    # Each company is in a <span id="dlCompanies_lblCompany_N" class="company-name">
+    for name_span in soup.find_all("span", id=re.compile(r"^dlCompanies_lblCompany_\d+$")):
+        m = re.search(r"_(\d+)$", name_span["id"])
+        idx = m.group(1)
+
+        name = name_span.get_text(strip=True)
         if not name:
             continue
 
-        logo_anchor = logo_img.find_parent("a", href=re.compile(r"^/en/[^/]+$"))
-        if not logo_anchor:
-            continue
+        def by_id(prefix: str):
+            el = soup.find(id=f"{prefix}_{idx}")
+            return el
 
-        slug = logo_anchor["href"].strip("/").split("/")[-1]
-        if slug in NAV_SLUGS:
-            continue
+        description = ""
+        desc_el = by_id("dlCompanies_lblDescription")
+        if desc_el:
+            description = desc_el.get_text(strip=True)
 
-        profile_url = urljoin(BASE_URL, logo_anchor["href"])
-        logo_url    = urljoin(BASE_URL, logo_img["src"])
+        city = country = ""
+        city_el = by_id("dlCompanies_lblCity")
+        country_el = by_id("dlCompanies_Label1")
+        if city_el:
+            city = city_el.get_text(strip=True)
+        if country_el:
+            country = country_el.get_text(strip=True)
 
-        container = logo_anchor.find_parent("td") or logo_anchor.find_parent("div")
-        description = city = country = address = phone = website = ""
+        address = ""
+        addr_el = by_id("dlCompanies_lblAddress")
+        if addr_el:
+            address = addr_el.get_text(strip=True)
 
-        if container:
-            for text_node in container.find_all(string=True):
-                text = text_node.strip()
-                if len(text) > 40 and text != name and "Add your company" not in text:
-                    description = text
-                    break
+        phone = ""
+        phone_el = by_id("dlCompanies_lblTelephone")
+        if phone_el:
+            phone = phone_el.get_text(strip=True)
 
-            flag = container.find("img", src=re.compile(r"/Images/Flags/"))
-            if flag:
-                loc = flag.get("alt", "")
-                m = re.match(r"^(.+?)\s*\((.+?)\)$", loc)
-                if m:
-                    city, country = m.group(1).strip(), m.group(2).strip()
-                else:
-                    city = loc.strip()
+        website = ""
+        site_el = by_id("dlCompanies_lnkWebSite")
+        if site_el:
+            website = site_el.get_text(strip=True)
 
-            for img in container.find_all("img", src=True):
-                src = img["src"]
-                raw = img.next_sibling
-                next_text = raw.strip() if isinstance(raw, str) else ""
-
-                if "map-marker" in src and not address:
-                    address = next_text
-                elif "phone" in src and not phone:
-                    phone = next_text
-                elif "globe" in src and not website:
-                    a_tag = img.find_next_sibling("a")
-                    website = (a_tag.get_text(strip=True) if a_tag else next_text)
+        logo_url = ""
+        logo_el = by_id("dlCompanies_imgLogo")
+        if logo_el and logo_el.get("src"):
+            logo_url = urljoin(BASE_URL, logo_el["src"])
 
         companies.append({
-            "name": name, "profile_url": profile_url, "description": description,
+            "name": name, "description": description,
             "city": city, "country": country, "address": address,
             "phone": phone, "website": website, "logo_url": logo_url,
         })
@@ -105,11 +97,14 @@ def parse_companies(html: str) -> list[dict]:
     return companies
 
 
-def get_next_url(html: str) -> str | None:
+def get_next_url(html: str, current_url: str) -> str | None:
+    """Find the '>' pagination link, avoiding loops if it points to current page."""
     soup = BeautifulSoup(html, "lxml")
     for a in soup.find_all("a", href=True):
         if a.get_text(strip=True) == ">":
-            return urljoin(BASE_URL, a["href"])
+            next_url = urljoin(BASE_URL, a["href"])
+            if next_url != current_url:
+                return next_url
     return None
 
 
@@ -138,7 +133,6 @@ def scrape_all() -> list[dict]:
             viewport={"width": 1280, "height": 800},
             locale="en-US",
         )
-        # Hide webdriver flag
         context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
@@ -151,26 +145,10 @@ def scrape_all() -> list[dict]:
             print(f"  Page {pnum:>3}: {url}")
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-
-                # Give JS / lazy-loaded content time to settle
-                page.wait_for_timeout(3000)
-
-                # Scroll down a few times in case logos are lazy-loaded
-                for _ in range(3):
-                    page.mouse.wheel(0, 2000)
-                    page.wait_for_timeout(1000)
-
-                page.wait_for_selector("img[src*='/Companies/Logo/']", timeout=30_000)
+                page.wait_for_timeout(2000)
+                page.wait_for_selector("span[id*='dlCompanies_lblCompany_']", timeout=30_000)
             except PWTimeout:
                 print("  [WARN] Timeout waiting for content — trying anyway")
-                if pnum == 1:
-                    try:
-                        page.screenshot(path=DEBUG_SHOT, full_page=True)
-                        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
-                            f.write(page.content())
-                        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
-                    except Exception as dbg_e:
-                        print(f"  [DEBUG] Failed to save debug artifacts: {dbg_e}")
             except Exception as e:
                 print(f"  [ERROR] {e}")
                 if pnum == 1:
@@ -178,9 +156,8 @@ def scrape_all() -> list[dict]:
                         page.screenshot(path=DEBUG_SHOT, full_page=True)
                         with open(DEBUG_HTML, "w", encoding="utf-8") as f:
                             f.write(page.content())
-                        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
-                    except Exception as dbg_e:
-                        print(f"  [DEBUG] Failed to save debug artifacts: {dbg_e}")
+                    except Exception:
+                        pass
                 break
 
             html = page.content()
@@ -193,15 +170,14 @@ def scrape_all() -> list[dict]:
                         page.screenshot(path=DEBUG_SHOT, full_page=True)
                         with open(DEBUG_HTML, "w", encoding="utf-8") as f:
                             f.write(html)
-                        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
-                    except Exception as dbg_e:
-                        print(f"  [DEBUG] Failed to save debug artifacts: {dbg_e}")
+                    except Exception:
+                        pass
                 break
 
             all_companies.extend(companies)
             print(f"           → {len(companies)} companies  (total: {len(all_companies)})")
 
-            next_url = get_next_url(html)
+            next_url = get_next_url(html, url)
             pnum += 1
             url = next_url
 
