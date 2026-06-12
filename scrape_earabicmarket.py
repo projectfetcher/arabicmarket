@@ -28,6 +28,8 @@ MAX_PAGES   = 999
 OUTPUT_CSV  = "saudi_arabia_companies.csv"
 OUTPUT_JSON = "saudi_arabia_companies.json"
 SAVE_JSON   = True
+DEBUG_HTML  = "debug_page1.html"
+DEBUG_SHOT  = "debug_page1.png"
 # ─────────────────────────────────────────────────────────────────────────────
 
 FIELDNAMES = [
@@ -148,13 +150,37 @@ def scrape_all() -> list[dict]:
         while url and pnum <= MAX_PAGES:
             print(f"  Page {pnum:>3}: {url}")
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                # Wait for at least one company logo to appear
-                page.wait_for_selector("img[src*='/Companies/Logo/']", timeout=15_000)
+                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+                # Give JS / lazy-loaded content time to settle
+                page.wait_for_timeout(3000)
+
+                # Scroll down a few times in case logos are lazy-loaded
+                for _ in range(3):
+                    page.mouse.wheel(0, 2000)
+                    page.wait_for_timeout(1000)
+
+                page.wait_for_selector("img[src*='/Companies/Logo/']", timeout=30_000)
             except PWTimeout:
                 print("  [WARN] Timeout waiting for content — trying anyway")
+                if pnum == 1:
+                    try:
+                        page.screenshot(path=DEBUG_SHOT, full_page=True)
+                        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
+                            f.write(page.content())
+                        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
+                    except Exception as dbg_e:
+                        print(f"  [DEBUG] Failed to save debug artifacts: {dbg_e}")
             except Exception as e:
                 print(f"  [ERROR] {e}")
+                if pnum == 1:
+                    try:
+                        page.screenshot(path=DEBUG_SHOT, full_page=True)
+                        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
+                            f.write(page.content())
+                        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
+                    except Exception as dbg_e:
+                        print(f"  [DEBUG] Failed to save debug artifacts: {dbg_e}")
                 break
 
             html = page.content()
@@ -162,6 +188,14 @@ def scrape_all() -> list[dict]:
 
             if not companies:
                 print("  No companies found — end of results.")
+                if pnum == 1:
+                    try:
+                        page.screenshot(path=DEBUG_SHOT, full_page=True)
+                        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
+                            f.write(html)
+                        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
+                    except Exception as dbg_e:
+                        print(f"  [DEBUG] Failed to save debug artifacts: {dbg_e}")
                 break
 
             all_companies.extend(companies)
