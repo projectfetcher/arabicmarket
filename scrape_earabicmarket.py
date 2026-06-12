@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ── Config ────────────────────────────────────────────────────────────────────
-START_URL   = "https://www.earabicmarket.com/en/companies/saudi-arabia/all"
+START_URL   = "https://www.earabicmarket.com/en/companies/saudi-arabia/all/search?order=05teNvEVbrc%3d"
 BASE_URL    = "https://www.earabicmarket.com"
 DELAY       = 2.5          # seconds between pages
 MAX_PAGES   = 999
@@ -42,7 +42,7 @@ def parse_companies(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     companies = []
 
-    # Each company is in a <span id="dlCompanies_lblCompany_N" class="company-name">
+    # Each company is anchored by <span id="dlCompanies_lblCompany_N" class="company-name">
     for name_span in soup.find_all("span", id=re.compile(r"^dlCompanies_lblCompany_\d+$")):
         m = re.search(r"_(\d+)$", name_span["id"])
         idx = m.group(1)
@@ -52,8 +52,7 @@ def parse_companies(html: str) -> list[dict]:
             continue
 
         def by_id(prefix: str):
-            el = soup.find(id=f"{prefix}_{idx}")
-            return el
+            return soup.find(id=f"{prefix}_{idx}")
 
         description = ""
         desc_el = by_id("dlCompanies_lblDescription")
@@ -108,6 +107,16 @@ def get_next_url(html: str, current_url: str) -> str | None:
     return None
 
 
+def dump_debug(page, html: str | None = None) -> None:
+    try:
+        page.screenshot(path=DEBUG_SHOT, full_page=True)
+        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
+            f.write(html if html is not None else page.content())
+        print(f"  [DEBUG] Saved {DEBUG_SHOT} and {DEBUG_HTML}")
+    except Exception as e:
+        print(f"  [DEBUG] Failed to save debug artifacts: {e}")
+
+
 def scrape_all() -> list[dict]:
     all_companies: list[dict] = []
 
@@ -149,15 +158,12 @@ def scrape_all() -> list[dict]:
                 page.wait_for_selector("span[id*='dlCompanies_lblCompany_']", timeout=30_000)
             except PWTimeout:
                 print("  [WARN] Timeout waiting for content — trying anyway")
+                if pnum == 1:
+                    dump_debug(page)
             except Exception as e:
                 print(f"  [ERROR] {e}")
                 if pnum == 1:
-                    try:
-                        page.screenshot(path=DEBUG_SHOT, full_page=True)
-                        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
-                            f.write(page.content())
-                    except Exception:
-                        pass
+                    dump_debug(page)
                 break
 
             html = page.content()
@@ -166,12 +172,7 @@ def scrape_all() -> list[dict]:
             if not companies:
                 print("  No companies found — end of results.")
                 if pnum == 1:
-                    try:
-                        page.screenshot(path=DEBUG_SHOT, full_page=True)
-                        with open(DEBUG_HTML, "w", encoding="utf-8") as f:
-                            f.write(html)
-                    except Exception:
-                        pass
+                    dump_debug(page, html)
                 break
 
             all_companies.extend(companies)
