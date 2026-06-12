@@ -1,22 +1,18 @@
 name: Scrape Saudi Arabia Companies
-
 on:
   schedule:
     - cron: "0 6 * * *"
-
   workflow_dispatch:
     inputs:
       max_pages:
         description: "Max pages to scrape (leave blank for all)"
         required: false
         default: "999"
-
 jobs:
   scrape:
     name: Run scraper
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+  
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +27,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
+        run: |
+          playwright install chromium --with-deps || {
+            sudo apt-get update
+            sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
+            playwright install chromium
+            playwright install-deps chromium
+          }
 
       - name: Patch MAX_PAGES (manual run only)
         if: github.event_name == 'workflow_dispatch' && inputs.max_pages != '999'
@@ -63,8 +65,3 @@ jobs:
       #   with:
       #     commit_message: "chore: update Saudi Arabia companies data [skip ci]"
       #     file_pattern: "*.csv *.json"
-
-
-
-
-
