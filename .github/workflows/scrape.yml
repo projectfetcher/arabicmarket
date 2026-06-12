@@ -50,15 +50,16 @@ jobs:
           echo "=== Row count ==="
           wc -l saudi_arabia_companies.csv
 
-      - name: Upload results
+      - name: Upload debug artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: saudi-arabia-companies-${{ github.run_number }}
+          name: debug-${{ github.run_number }}
           path: |
-            saudi_arabia_companies.csv
-            saudi_arabia_companies.json
-          retention-days: 90
-
+            debug_page1.png
+            debug_page1.html
+          if-no-files-found: ignore
+          retention-days: 7
       # Uncomment to auto-commit results back to the repo:
       # - name: Commit updated data
       #   uses: stefanzweifel/git-auto-commit-action@v5
