@@ -1,11 +1,9 @@
 name: Scrape Saudi Arabia Companies
 
 on:
-  # Run automatically every day at 06:00 UTC
   schedule:
     - cron: "0 6 * * *"
 
-  # Manual trigger from the Actions tab
   workflow_dispatch:
     inputs:
       max_pages:
@@ -17,44 +15,39 @@ jobs:
   scrape:
     name: Run scraper
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Python setup ──────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      # ── 3. Install dependencies ──────────────────────────────────────────────
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Patch MAX_PAGES for manual runs ───────────────────────────────────
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
       - name: Patch MAX_PAGES (manual run only)
         if: github.event_name == 'workflow_dispatch' && inputs.max_pages != '999'
         run: |
           sed -i "s/^MAX_PAGES\s*=.*/MAX_PAGES   = ${{ inputs.max_pages }}/" scrape_earabicmarket.py
 
-      # ── 5. Run scraper ───────────────────────────────────────────────────────
       - name: Run scraper
         run: python scrape_earabicmarket.py
 
-      # ── 6. Verify output files exist ─────────────────────────────────────────
       - name: Verify output
         run: |
           echo "=== CSV preview (first 5 lines) ==="
           head -5 saudi_arabia_companies.csv
-          echo ""
           echo "=== Row count ==="
           wc -l saudi_arabia_companies.csv
 
-      # ── 7. Upload CSV + JSON as artifacts (kept 90 days) ─────────────────────
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
@@ -64,11 +57,14 @@ jobs:
             saudi_arabia_companies.json
           retention-days: 90
 
-      # ── 8. (Optional) Commit results back to repo ────────────────────────────
-      #  Uncomment to auto-commit the CSV/JSON after each run.
-      #
+      # Uncomment to auto-commit results back to the repo:
       # - name: Commit updated data
       #   uses: stefanzweifel/git-auto-commit-action@v5
       #   with:
       #     commit_message: "chore: update Saudi Arabia companies data [skip ci]"
       #     file_pattern: "*.csv *.json"
+
+
+
+
+
